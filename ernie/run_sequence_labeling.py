@@ -25,6 +25,9 @@ import six
 import logging
 import multiprocessing
 from io import open
+import paddle
+import numpy as np
+from paddle.fluid.contrib import sparsity
 
 # NOTE(paddle-dev): All of these flags should be
 # set before `import paddle`. Otherwise, it would
@@ -93,7 +96,8 @@ def main(args):
         else:
             max_train_steps = args.epoch * num_train_examples // args.batch_size // dev_count
 
-        warmup_steps = int(max_train_steps * args.warmup_proportion)
+        # For ASP model generation and testing
+        warmup_steps = 0 # int(max_train_steps * args.warmup_proportion)
         log.info("Device count: %d" % dev_count)
         log.info("Num train examples: %d" % num_train_examples)
         log.info("Max train steps: %d" % max_train_steps)
@@ -103,7 +107,7 @@ def main(args):
 
         with fluid.program_guard(train_program, startup_prog):
             with fluid.unique_name.guard():
-                train_pyreader, graph_vars = create_model(
+                train_pyreader, graph_vars, ernie = create_model(
                     args,
                     pyreader_name='train_reader',
                     ernie_config=ernie_config)
@@ -122,7 +126,8 @@ def main(args):
 		    incr_every_n_steps=args.incr_every_n_steps,
 		    decr_every_n_nan_or_inf=args.decr_every_n_nan_or_inf,
 		    incr_ratio=args.incr_ratio,
-		    decr_ratio=args.decr_ratio)
+		    decr_ratio=args.decr_ratio,
+                    model=ernie)
 
         if args.verbose:
             if args.in_tokens:
@@ -139,7 +144,7 @@ def main(args):
         test_prog = fluid.Program()
         with fluid.program_guard(test_prog, startup_prog):
             with fluid.unique_name.guard():
-                test_pyreader, graph_vars = create_model(
+                test_pyreader, graph_vars, _ = create_model(
                     args,
                     pyreader_name='test_reader',
                     ernie_config=ernie_config)
@@ -201,6 +206,8 @@ def main(args):
             args.init_checkpoint,
             main_program=startup_prog,
             use_fp16=args.use_fp16)
+
+    sparsity.prune_model(place, train_program)
 
     if args.do_train:
         exec_strategy = fluid.ExecutionStrategy()
@@ -264,11 +271,13 @@ def main(args):
                              steps, loss, f1, precision, recall,
                              args.skip_steps / used_time))
                     time_begin = time.time()
-
                 if nccl2_trainer_id == 0 and steps % args.save_steps == 0:
                     save_path = os.path.join(args.checkpoints,
                                              "step_" + str(steps))
                     fluid.io.save_persistables(exe, save_path, train_program)
+                    print("model's sparsity: {}".format(total_sparse(train_program)))
+                    # for fast ASP-model-generation
+                    break
 
                 if nccl2_trainer_id == 0 and steps % args.validation_steps == 0:
                     # evaluate dev set
@@ -286,7 +295,7 @@ def main(args):
                 fluid.io.save_persistables(exe, save_path, train_program)
                 train_pyreader.reset()
                 break
-
+    '''
     # final eval on dev set
     if nccl2_trainer_id ==0 and args.do_val:
         if not args.do_train:
@@ -299,7 +308,7 @@ def main(args):
             current_example, current_epoch = reader.get_train_progress()
         predict_wrapper(reader, exe, test_prog, test_pyreader, graph_vars,
                 current_epoch, 'final')
-
+    '''
 
 def evaluate_wrapper(reader, exe, test_prog, test_pyreader, graph_vars,
                      epoch, steps):
@@ -319,6 +328,19 @@ def evaluate_wrapper(reader, exe, test_prog, test_pyreader, graph_vars,
         log.info(info + ', file: {}, epoch: {}, steps: {}'.format(
             ds, epoch, steps))
 
+def total_sparse(program):
+    total = 0
+    values = 0
+    for param in program.all_parameters():
+        total += np.product(param.shape)
+        values += np.count_nonzero(
+            np.array(paddle.static.global_scope().find_var(param.name)
+                     .get_tensor()))
+        shape = np.product(param.shape)
+        non_zeros = np.count_nonzero(np.array(paddle.static.global_scope().find_var(param.name).get_tensor()))
+        print("name: {}, shape: {}, sparsity: {}".format(param.name, param.shape, 1 - non_zeros / shape))
+    sparsity = 1 - float(values) / total
+    return sparsity
 
 def predict_wrapper(reader, exe, test_prog, test_pyreader, graph_vars,
                     epoch, steps):
@@ -352,6 +374,7 @@ def predict_wrapper(reader, exe, test_prog, test_pyreader, graph_vars,
                 f.write('{}\t{}\t{}\n'.format(id, s, p))
 
 if __name__ == '__main__':
+    paddle.enable_static()
     prepare_logger(log)
     print_arguments(args)
     check_cuda(args.use_cuda)

@@ -5,7 +5,7 @@ export FLAGS_sync_nccl_allreduce=1
 export CUDA_VISIBLE_DEVICES=0
 
 export PYTHONPATH=./ernie:${PYTHONPATH:-}
-python -u ./ernie/run_sequence_labeling.py \
+python3.7 -u ./ernie/run_sequence_labeling.py \
                    --use_cuda true \
                    --do_train true \
                    --do_val true \
@@ -21,12 +21,12 @@ python -u ./ernie/run_sequence_labeling.py \
                    --vocab_path ${MODEL_PATH}/vocab.txt \
                    --ernie_config_path ${MODEL_PATH}/ernie_config.json \
                    --checkpoints ./checkpoints \
-                   --save_steps 100000 \
+                   --save_steps 10 \
                    --weight_decay  0.01 \
                    --warmup_proportion 0.0 \
                    --validation_steps 100 \
                    --use_fp16 false \
-                   --epoch 6 \
+                   --epoch 1 \
                    --max_seq_len 256 \
                    --learning_rate 5e-5 \
                    --skip_steps 10 \

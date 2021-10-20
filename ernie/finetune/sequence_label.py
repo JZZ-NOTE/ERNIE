@@ -105,7 +105,7 @@ def create_model(args, pyreader_name, ernie_config, is_prediction=False):
     for k, v in graph_vars.items():
         v.persistable = True
 
-    return pyreader, graph_vars
+    return pyreader, graph_vars, ernie
 
 
 def calculate_f1(num_label, num_infer, num_correct):

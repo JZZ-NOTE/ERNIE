@@ -22,6 +22,7 @@ from __future__ import absolute_import
 
 import numpy as np
 import paddle.fluid as fluid
+from paddle.fluid.contrib import sparsity
 from utils.fp16 import create_master_params_grads, master_param_to_train_param, apply_dynamic_loss_scaling
 
 
@@ -67,7 +68,8 @@ def optimization(loss,
                  incr_every_n_steps=1000,
                  decr_every_n_nan_or_inf=2,
                  incr_ratio=2.0,
-                 decr_ratio=0.8):
+                 decr_ratio=0.8,
+                 model=None):
     if warmup_steps > 0:
         if scheduler == 'noam_decay':
             scheduled_lr = fluid.layers.learning_rate_scheduler\
@@ -147,7 +149,13 @@ def optimization(loss,
         for param in train_program.global_block().all_parameters():
             param_list[param.name] = param * 1.0
             param_list[param.name].stop_gradient = True
+       
+        excluded_layers = []
+        # if model.pooler is not None: excluded_layers.append(model.pooler.dense.full_name())
+        # if model.classifier is not None: excluded_layers.append(model.classifier.full_name())
+        # sparsity.set_excluded_layers(train_program, excluded_layers)
 
+        optimizer = sparsity.decorate(optimizer)
         _, param_grads = optimizer.minimize(loss)
 
         if weight_decay > 0:
